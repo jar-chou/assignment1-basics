@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "name": "Auto-Configured",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/jarch/miniconda3/envs/cs336_env/include/python3.13",
+                "/home/jarch/vscode_resp/assignment1-basics/.venv/lib/python3.13/site-packages/pybind11/include",
+                "/usr/include"
+            ]
+        }
+    ],
+    "version": 4
+}
