@@ -1,3 +1,4 @@
+#include <Python.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> // 🌟 核心：有了它，C++ 的 std::pair 会自动映射为 Python 的 tuple
 #include <iostream>
@@ -31,7 +32,7 @@ public:
     }
 };
 
-// 2. 轻量化倒排索引链表
+// 链表 用于从best pair 定位到含有该pair的pre token
 class string_node {
 public:
     string_node* next;
@@ -75,14 +76,13 @@ static string_list_hander* create_string_list_hander(size_t index, size_t pos) {
 // 返回值：std::pair< 词表, Merges历史表 >
 std::pair<std::vector<py::bytes>, std::vector<std::pair<py::bytes, py::bytes>>> 
 run_cpp_algorithm(const py::dict& py_dict, int merge_times) {
-    
-    std::set<byte_pairs> algorithm_set;
-    std::map<std::pair<std::string, std::string>, int> counter_map;
-    std::map<std::pair<std::string, std::string>, string_list_hander *> pair_to_word_map;
+    std::set<byte_pairs> algorithm_set;     // 用于排序bast pair
+    std::map<std::pair<std::string, std::string>, int> counter_map; // 用于初始化algorithm set，后续用于减支
+    std::map<std::pair<std::string, std::string>, string_list_hander *> pair_to_word_map;   // 用于从best pair 定位到含有该pair的pre token
     
     // 返回容器 A：训练好的新 Token 词表
     std::vector<py::bytes> trained_vocab; 
-    // 🌟 返回容器 B：每次合并的详细信息表 list[tuple[bytes, bytes]]
+    // 返回容器 B：每次合并的详细信息表 list[tuple[bytes, bytes]]
     std::vector<std::pair<py::bytes, py::bytes>> merges_history; 
 
     std::vector<std::string> all_pre_tokens;
