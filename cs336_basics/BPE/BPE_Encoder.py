@@ -48,13 +48,10 @@ class BPE_Encoder:
         res = []
         cache = dict();
         if self.special_tokens == None:
-            text_binary = text.encode('utf-8')
-            # map 会把任务分发给 8 个进程并行执行，并等待所有进程返回结果
             PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
             for match in re.finditer(PAT, text):
                 item = match.group(0).encode("utf-8")
                 if not item in cache:
-                    # TODO apply_merge
                     merge_res = self.__apply_merge(item)
                     cache[item] = merge_res
                 res = res + cache[item]
@@ -62,13 +59,11 @@ class BPE_Encoder:
         else:
             sorted_specials = sorted(self.special_tokens, key=lambda s: len(s), reverse=True)
             escaped_specials = [re.escape(token) for token in sorted_specials]
-            # escaped_specials = [re.escape(token) for token in self.special_tokens]
             
             pattern_str = f"({'|'.join(escaped_specials)})"
             pattern = re.compile(pattern_str)
             PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
             
-            results = []
             last_idx = 0
             
             # 3. 使用 finditer 遍历所有匹配到的 special tokens
@@ -85,7 +80,6 @@ class BPE_Encoder:
                         res = res + cache[item]
                 if match.group().encode("utf-8") in self.vocab_rev:
                     res = res + [self.vocab_rev[match.group().encode("utf-8")],]
-                    # print(self.vocab_rev[match.group().encode("utf-8")])
                 else:
                     print("have not such token:",match.group()," in vocab")
                 last_idx = end
@@ -107,4 +101,4 @@ class BPE_Encoder:
     
     def decode(self, ids: list[int]) -> str:
         res = b"".join(self.vocab[i] for i in ids)
-        return bytes(res).decode("utf-8",  errors="replace")
+        return res.decode("utf-8",errors="replace")
