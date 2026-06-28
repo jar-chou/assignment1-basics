@@ -19,33 +19,33 @@ class Linear(nn.Module):
 class Embedding(nn.Module):
     def __init__(self, num_embedding:int,embedding_dim:int,device=None,dtype=None):
         super().__init__()
-        self.W = nn.Parameter(torch.zeros((num_embedding, embedding_dim), device=device, dtype=dtype))
-        nn.init.trunc_normal_(self.W,mean=0,std=1,a=-3,b=3)
+        self.weight = nn.Parameter(torch.zeros((num_embedding, embedding_dim), device=device, dtype=dtype))
+        nn.init.trunc_normal_(self.weight,mean=0,std=1,a=-3,b=3)
         
     def forward(self, X):
-        # return F.one_hot(X,self.W.shape[0]).type(dtype=self.W.dtype)@self.W
-        return self.W[X]
+        # return F.one_hot(X,self.weight.shape[0]).type(dtype=self.weight.dtype)@self.weight
+        return self.weight[X]
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device = None, dtype = None):
         super().__init__()
         self.d_model, self.eps = d_model, eps
-        self.G = nn.Parameter(torch.ones((d_model,), device=device, dtype=dtype))
+        self.weight = nn.Parameter(torch.ones((d_model,), device=device, dtype=dtype))
     
     def forward(self, x:torch.Tensor):
         in_dtype = x.dtype
         x = x.to(torch.float32)
         rms = torch.sqrt((x*x).sum(dim=-1)/self.d_model+self.eps)
         # rms = einops.repeat(rms,"... -> ... c", c=self.d_model)
-        return (x/rms[..., None]*self.G[None, ...]).to(in_dtype)
+        return (x/rms[..., None]*self.weight[None, ...]).to(in_dtype)
 
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device = None, dtype = None):
         super().__init__()
         self.d_model, self.d_ff = d_model, d_ff
-        self.w1 = Linear(d_model, d_ff)
-        self.w2 = Linear(d_ff, d_model)
-        self.w3 = Linear(d_model, d_ff)
+        self.w1 = Linear(d_model, d_ff, device=device, dtype=dtype)
+        self.w2 = Linear(d_ff, d_model, device=device, dtype=dtype)
+        self.w3 = Linear(d_model, d_ff, device=device, dtype=dtype)
         
     
     def SiLU(self,X):
@@ -81,7 +81,7 @@ class RoPE(nn.Module):
     
     '''
     # Llama 的实现：这里的cache大小不用存很多零的稀疏矩阵了，而且计算的时候不需要做矩阵乘法大量乘零元素
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None, dtype=None):
         super().__init__()
         self.d_k = d_k
         
@@ -94,23 +94,24 @@ class RoPE(nn.Module):
         
         # 2. 核心：利用欧拉公式，直接计算出复数旋转因子 e^(i * theta)
         # torch.polar(magnitudes, angles) 根据模长(1.0)和角度生成复数
-        freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+        freqs_cis = torch.polar(torch.ones_like(freqs), freqs).to(dtype=dtype)
         
         # 缓存复数因子（不参与梯度，形状为 [max_seq_len, d_k // 2]）
         self.register_buffer("freqs_cis_cached", freqs_cis, persistent=False)
     
     def forward(self, x: torch.Tensor, token_position: torch.Tensor) -> torch.Tensor:
         """
-        x: [Batch, Num_Heads, Seq_Len, Head_Dim] 
-        token_position: [Batch, Seq_Len]
+        x: [Batch, Num_Heads, Seq_Len, d_k] 
+        token_position: [Seq_Len]
         """
-        # 1. 将输入的最后一个维度 [..., Head_Dim] 转化为复数形式 [..., Head_Dim // 2]
+        # 1. 将输入的最后一个维度 [..., d_k] 转化为复数形式 [..., d_k // 2]
         # view_as_complex 要求最后一个维度必须是连续的，且大小为 2 的倍数
         # 它会把原本相邻的 (x0, x1) 自动变成 x0 + i*x1
         x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+        # print(token_position.shape)
         
         # 2. 从缓存中根据当前 batch 里的位置获取复数因子
-        # freqs_cis 形状转换: [max_seq_len, d_k // 2] -> [Batch, Seq_Len, d_k // 2]
+        # freqs_cis 形状: [seq_len, d_k // 2]
         freqs_cis = self.freqs_cis_cached[token_position]
         
         # 3. 完美的复数乘法！(x0 + i*x1) * (cos + i*sin)
@@ -148,7 +149,7 @@ class MultiHeadSelfAttention(nn.Module):
     rope = None
     rope_sign = 0
 
-    def __init__(self, num_heads, d_model, max_seq_len=None, theta=None, device=None):
+    def __init__(self, num_heads, d_model, max_seq_len=None, theta=None, device=None, dtype=None):
         super().__init__()
         self.num_heads = num_heads
         self.d_k = self.d_v = d_model // num_heads
@@ -160,7 +161,7 @@ class MultiHeadSelfAttention(nn.Module):
         
         if max_seq_len and theta and (MultiHeadSelfAttention.rope_sign == 0):
             # 明确赋值给类变量
-            MultiHeadSelfAttention.rope = RoPE(theta, self.d_k, max_seq_len, device=device)
+            MultiHeadSelfAttention.rope = RoPE(theta, self.d_k, max_seq_len, device=device, dtype=dtype)
             MultiHeadSelfAttention.rope_sign = 1
             
         
@@ -175,8 +176,9 @@ class MultiHeadSelfAttention(nn.Module):
         Qs = einops.rearrange(Qs, "b l (h d) -> b h l d", h=self.num_heads)
         Ks = einops.rearrange(Ks, "b l (h d) -> b h l d", h=self.num_heads)
         Vs = einops.rearrange(Vs, "b l (h d) -> b h l d", h=self.num_heads)
-        if (MultiHeadSelfAttention.rope_sign) and isinstance(token_positions,torch.Tensor):
-            # print(token_positions)
+        if (MultiHeadSelfAttention.rope_sign):
+            if not isinstance(token_positions,torch.Tensor):
+                token_positions = torch.tensor(range(x.shape[-2]))
             Qs = MultiHeadSelfAttention.rope(Qs, token_positions)
             Ks = MultiHeadSelfAttention.rope(Ks, token_positions)
         mask = None
@@ -188,77 +190,33 @@ class MultiHeadSelfAttention(nn.Module):
         
         return self.output_proj(attention)
 
-# class MultiHeadSelfAttention(nn.Module):
-#     def __init__(self, d_model: int, num_heads: int, 
-#                 theta: float | None = None,
-#                 max_seq_len: int | None = None,
-#                 ):
-#         super().__init__()
+class Transformer_Block(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, max_seq_len=None, theta=None, device=None, dtype=None):
+        super().__init__()
+        self.attn = MultiHeadSelfAttention(num_heads, d_model, max_seq_len=max_seq_len, theta=theta, device=device, dtype=dtype)
+        self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
+        self.ln2 = RMSNorm(d_model, device=device, dtype=dtype)
         
-#         self.d_model = d_model
-#         self.num_heads = num_heads
-#         self.d_k = d_model // num_heads
-#         self.d_v = d_model // num_heads
+    def forward(self, x, token_positions=None):
+        x = x+self.attn(self.ln1(x), token_positions)
+        return x+self.ffn(self.ln2(x))
 
-#         self.q_proj = Linear(d_model, num_heads*self.d_k)
-#         self.k_proj = Linear(d_model, num_heads*self.d_k)
-#         self.v_proj = Linear(d_model, num_heads*self.d_v)
-#         self.output_proj = Linear(num_heads*self.d_v, d_model)
+class Transformer(nn.Module):
+    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta=None, device=None, dtype=None):
+        super().__init__()
+        self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
+        self.layers = torch.nn.ModuleList([
+            Transformer_Block(d_model, num_heads, d_ff, context_length, rope_theta, device=device, dtype=dtype)
+            for _ in range(num_layers)])
+        self.ln_final = RMSNorm(d_model, device=device, dtype=dtype)
+        self.lm_head = Linear(d_model, vocab_size)
+    
+    def forward(self, x):
+        x = self.token_embeddings(x)
+        for block in self.layers:
+            x = block(x)
+        x = self.ln_final(x)
+        x = self.lm_head(x)
+        return x
 
-#         if theta is not None and max_seq_len is not None:
-#             self.rope = RoPE(theta, self.d_k, max_seq_len)
-
-#     def forward(self, x: torch.Tensor, 
-#                 mask: torch.Tensor | None = None,
-#                 token_positions: torch.Tensor | None = None) -> torch.Tensor:
-#         *b, seq_len, d_model = x.shape
-#         x_q = self.q_proj(x)
-#         x_k = self.k_proj(x)
-#         x_v = self.v_proj(x)
-        
-#         x_q = einops.rearrange(x_q, "... seq_len (num_heads d_k) -> ... num_heads seq_len d_k", 
-#                         num_heads=self.num_heads, d_k=self.d_k)
-#         x_k = einops.rearrange(x_k, "... seq_len (num_heads d_k) -> ... num_heads seq_len d_k", 
-#                         num_heads=self.num_heads, d_k=self.d_k)
-#         x_v = einops.rearrange(x_v, "... seq_len (num_heads d_v) -> ... num_heads seq_len d_v", 
-#                         num_heads=self.num_heads, d_v=self.d_v)
-        
-#         # ROPE
-#         if token_positions is None:
-#             token_positions = torch.arange(seq_len, device=x.device)
-#             for _ in range(len(b)):
-#                 token_positions = token_positions.unsqueeze(0)  
-#             x_q = self.rope(x_q, token_positions)
-#             x_k = self.rope(x_k, token_positions)
-        
-        
-#         if mask is None:
-#             mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=x.device))
-#             for _ in range(len(b)):
-#                 mask = mask.unsqueeze(0)  
-#         else:
-#             for _ in range(len(b)):
-#                 mask = mask.unsqueeze(0) 
-        
-#         out = scaled_dot_product_attention(x_q, x_k, x_v, mask)
-#         out = einops.rearrange(out, "... num_heads seq_len d_v -> ... seq_len (num_heads d_v)", 
-#                         num_heads=self.num_heads, d_v=self.d_v)
-#         out = self.output_proj(out)
-
-#         return out
-        
-        
-        
-        
-        
-
-# x = torch.tensor([[[1,2,3,4],
-#                    [1,2,3,4]],
-                  
-#                   [[1,2,3,4],
-#                    [1,2,3,4]]])
-# # # x = x.float().reshape(*x.shape[:-1], -1, 2)
-# # # x = torch.view_as_complex(x)
-# x = x.flatten(-2)
-# print(x)
-# print(torch.exp(torch.tensor(-torch.inf)))

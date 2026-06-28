@@ -147,7 +147,6 @@ def run_multihead_self_attention(
     
     # multihead_self_attention.load_state_dict({"Wq":q_proj_weight, "Wk":k_proj_weight, "Wv":v_proj_weight, "Wo":o_proj_weight})
     return multihead_self_attention(in_features)
-    # raise NotImplementedError
 
 
 def run_multihead_self_attention_with_rope(
@@ -194,7 +193,6 @@ def run_multihead_self_attention_with_rope(
     multihead_self_attention.v_proj.weight.data = v_proj_weight
     multihead_self_attention.output_proj.weight.data = o_proj_weight
     return multihead_self_attention(in_features,token_positions)
-    # raise NotImplementedError
 
 
 def run_rope(
@@ -290,7 +288,10 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    transformer_block = component.Transformer_Block(d_model, num_heads, d_ff, max_seq_len, theta)
+    transformer_block.load_state_dict(weights)
+    return transformer_block(in_features)
+    # raise NotImplementedError
 
 
 def run_transformer_lm(
@@ -372,7 +373,10 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformer_lm = component.Transformer(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta,)
+    transformer_lm.load_state_dict(weights)
+    return transformer_lm(in_indices)
+    # raise NotImplementedError
 
 
 def run_rmsnorm(
@@ -396,7 +400,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rmsnorm = component.RMSNorm(d_model, eps)
-    rmsnorm.load_state_dict({"G":weights})
+    rmsnorm.load_state_dict({"weight":weights})
     return rmsnorm(in_features)
 
 
